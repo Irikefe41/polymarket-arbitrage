@@ -7,7 +7,15 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node src/test-api.js"
+    "test": "node src/test-api.js",
+    "test:ws": "node test/test-websocket-standalone.js",
+    "logs": "node src/view-logs.js",
+    "logs:latest": "node src/view-logs.js latest",
+    "logs:today": "node src/view-logs.js today",
+    "logs:errors": "node src/view-logs.js errors",
+    "logs:stats": "node src/view-logs.js stats",
+    "logs:clean": "node src/view-logs.js clean",
+    "logs:ws": "tail -f logs/websocket-test.log"
   },
   "keywords": [
     "polymarket",
@@ -20,8 +28,9 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "dotenv": "^16.4.5",
-    "node-fetch": "^3.3.2"
+    "dotenv": "^16.6.1",
+    "node-fetch": "^3.3.2",
+    "ws": "^8.18.0"
   },
   "engines": {
     "node": ">=18.0.0"

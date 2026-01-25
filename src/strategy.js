@@ -1,13 +1,15 @@
 import fs from 'fs';
 import path from 'path';
+import feeCalculator from './fee-calculator.js';
 
 const INVESTMENT_PER_POSITION = 100; // $100 per position
 const MIN_EXPECTED_RETURN = 210; // Minimum $210 return PER POSITION (110% ROI)
 const MIN_PROFIT = 110; // Minimum $110 profit per position (110% ROI)
 
 class HedgeStrategy {
-  constructor(portfolio, resultsFile = './data/strategy-results.json') {
+  constructor(portfolio, tradingExecutor, resultsFile = './data/strategy-results.json') {
     this.portfolio = portfolio;
+    this.executor = tradingExecutor; // Trading executor (paper or live)
     this.resultsFile = resultsFile;
     
     // Ensure data directory exists
@@ -40,23 +42,64 @@ class HedgeStrategy {
   }
 
   evaluatePosition(price, outcome) {
+    // Validate price is within reasonable bounds (0.01 to 0.99)
+    // Extreme prices cause calculation issues and indicate market certainty
+    if (price < 0.01 || price > 0.99 || !isFinite(price)) {
+      return {
+        outcome,
+        price,
+        shares: 0,
+        investment: INVESTMENT_PER_POSITION,
+        estimatedFee: 0,
+        effectiveRate: 0,
+        totalCost: INVESTMENT_PER_POSITION,
+        potentialReturn: 0,
+        grossProfit: 0,
+        grossROI: 0,
+        netProfit: 0,
+        netROI: 0,
+        roi: 0,
+        isProfitable: false,
+        meetsThreshold: false,
+        invalidPrice: true,
+        reason: 'Price outside valid range ($0.01 - $0.99)'
+      };
+    }
+    
     // Calculate returns for a single position
     const shares = INVESTMENT_PER_POSITION / price;
     const potentialReturn = shares * 1.00; // If this outcome wins
-    const netProfit = potentialReturn - INVESTMENT_PER_POSITION;
-    const roi = ((netProfit / INVESTMENT_PER_POSITION) * 100).toFixed(2);
     
-    // Check if this position meets the $210 threshold
-    const isProfitable = potentialReturn >= MIN_EXPECTED_RETURN;
+    // Calculate fees
+    const estimatedFee = feeCalculator.calculateFeeForInvestment(INVESTMENT_PER_POSITION, price);
+    const effectiveRate = feeCalculator.calculateEffectiveRate(price);
+    const totalCost = INVESTMENT_PER_POSITION + estimatedFee;
+    
+    // Gross profit (without fees)
+    const grossProfit = potentialReturn - INVESTMENT_PER_POSITION;
+    const grossROI = ((grossProfit / INVESTMENT_PER_POSITION) * 100).toFixed(2);
+    
+    // Net profit (after fees)
+    const netProfit = potentialReturn - totalCost;
+    const netROI = ((netProfit / totalCost) * 100).toFixed(2);
+    
+    // Check if this position meets the $210 threshold AFTER fees
+    const isProfitable = potentialReturn >= MIN_EXPECTED_RETURN && netProfit > 0;
     
     return {
       outcome,
       price,
       shares,
       investment: INVESTMENT_PER_POSITION,
+      estimatedFee,
+      effectiveRate,
+      totalCost,
       potentialReturn,
+      grossProfit,
+      grossROI: parseFloat(grossROI),
       netProfit,
-      roi: parseFloat(roi),
+      netROI: parseFloat(netROI),
+      roi: parseFloat(netROI), // Use net ROI as primary ROI
       isProfitable,
       meetsThreshold: isProfitable
     };
@@ -138,7 +181,7 @@ class HedgeStrategy {
     };
   }
 
-  execute(marketSlug, marketTitle, marketEndDate, upPrice, downPrice, colors) {
+  async execute(marketSlug, marketTitle, marketEndDate, upPrice, downPrice, colors) {
     const decision = this.shouldExecute(marketSlug, upPrice, downPrice);
     
     if (!decision.shouldExecute) {
@@ -161,21 +204,23 @@ class HedgeStrategy {
       console.log(`\n  ${colors.green}📈 Buying UP${colors.reset}`);
       console.log(`    Price: $${upAnalysis.price.toFixed(4)}`);
       console.log(`    Investment: $${upAnalysis.investment}`);
+      console.log(`    Est. Fee: $${upAnalysis.estimatedFee.toFixed(4)} (${upAnalysis.effectiveRate.toFixed(2)}%)`);
+      console.log(`    Total Cost: $${upAnalysis.totalCost.toFixed(2)}`);
       console.log(`    Shares: ${upAnalysis.shares.toFixed(2)}`);
       console.log(`    Potential Return: $${upAnalysis.potentialReturn.toFixed(2)}`);
-      console.log(`    Expected Profit: ${colors.green}+$${upAnalysis.netProfit.toFixed(2)} (${upAnalysis.roi}%)${colors.reset}`);
+      console.log(`    Expected Profit (after fees): ${colors.green}+$${upAnalysis.netProfit.toFixed(2)} (${upAnalysis.netROI}%)${colors.reset}`);
       
-      const upResult = this.portfolio.buyShares(
+      const upResult = await this.executor.executeBuy(
         marketSlug,
         marketTitle,
+        marketEndDate,
         'Up',
         upPrice,
-        INVESTMENT_PER_POSITION,
-        marketEndDate
+        INVESTMENT_PER_POSITION
       );
       
       if (upResult.success) {
-        console.log(`    ${colors.green}✅ Up position executed${colors.reset}`);
+        console.log(`    ${colors.green}✅ Up position executed${upResult.mode === 'live' ? ' (LIVE TRADE)' : ''}${colors.reset}`);
         results.positions.push({ outcome: 'Up', position: upResult.position });
         
         // Mark as executed
@@ -194,21 +239,23 @@ class HedgeStrategy {
       console.log(`\n  ${colors.red}📉 Buying DOWN${colors.reset}`);
       console.log(`    Price: $${downAnalysis.price.toFixed(4)}`);
       console.log(`    Investment: $${downAnalysis.investment}`);
+      console.log(`    Est. Fee: $${downAnalysis.estimatedFee.toFixed(4)} (${downAnalysis.effectiveRate.toFixed(2)}%)`);
+      console.log(`    Total Cost: $${downAnalysis.totalCost.toFixed(2)}`);
       console.log(`    Shares: ${downAnalysis.shares.toFixed(2)}`);
       console.log(`    Potential Return: $${downAnalysis.potentialReturn.toFixed(2)}`);
-      console.log(`    Expected Profit: ${colors.green}+$${downAnalysis.netProfit.toFixed(2)} (${downAnalysis.roi}%)${colors.reset}`);
+      console.log(`    Expected Profit (after fees): ${colors.green}+$${downAnalysis.netProfit.toFixed(2)} (${downAnalysis.netROI}%)${colors.reset}`);
       
-      const downResult = this.portfolio.buyShares(
+      const downResult = await this.executor.executeBuy(
         marketSlug,
         marketTitle,
+        marketEndDate,
         'Down',
         downPrice,
-        INVESTMENT_PER_POSITION,
-        marketEndDate
+        INVESTMENT_PER_POSITION
       );
       
       if (downResult.success) {
-        console.log(`    ${colors.green}✅ Down position executed${colors.reset}`);
+        console.log(`    ${colors.green}✅ Down position executed${downResult.mode === 'live' ? ' (LIVE TRADE)' : ''}${colors.reset}`);
         results.positions.push({ outcome: 'Down', position: downResult.position });
         
         // Mark as executed

@@ -30,12 +30,15 @@ const config = {
     maxResolutionWait: parseInt(process.env.MAX_RESOLUTION_WAIT) || 600000,
     resolutionPollInterval: parseInt(process.env.RESOLUTION_POLL_INTERVAL) || 30000,
     minTimeToStart: parseInt(process.env.MIN_TIME_TO_START) || 120000,
+    websocketEnabled: process.env.WEBSOCKET_ENABLED === 'true', // Phase 3: WebSocket
+    websocketStaleThreshold: parseInt(process.env.WEBSOCKET_STALE_THRESHOLD) || 5000,
   },
 
   // File paths
   files: {
     portfolio: process.env.PORTFOLIO_FILE || './data/portfolio.json',
     strategyResults: process.env.STRATEGY_RESULTS_FILE || './data/strategy-results.json',
+    logs: process.env.LOG_DIRECTORY || './logs',
   },
 
   // Future: Live trading config (not implemented)
@@ -60,10 +63,25 @@ export function validateConfig() {
     errors.push('INITIAL_BALANCE must be at least 2x INVESTMENT_PER_POSITION');
   }
 
-  // Warn about live trading
+  // Validate live trading configuration
   if (config.wallet.liveTradingEnabled) {
-    console.warn('⚠️  WARNING: Live trading is not yet implemented. Running in paper trading mode.');
-    config.wallet.liveTradingEnabled = false;
+    console.warn('\n⚠️  ⚠️  ⚠️  WARNING: LIVE TRADING MODE ENABLED ⚠️  ⚠️  ⚠️');
+    console.warn('⚠️  Real money will be used for trades!');
+    console.warn('⚠️  Live trading API integration is INCOMPLETE');
+    console.warn('⚠️  Polymarket CLOB integration must be implemented first\n');
+    
+    if (!config.wallet.privateKey) {
+      errors.push('WALLET_PRIVATE_KEY is required for live trading');
+    }
+    
+    if (!config.wallet.rpcUrl) {
+      console.warn('⚠️  RPC_URL not set, using default Polygon RPC (may be slow)');
+    }
+    
+    // For now, prevent live trading until fully implemented
+    console.error('❌ Live trading is not yet fully implemented.');
+    console.error('❌ Please complete the Polymarket API integration in src/trading-executor.js');
+    errors.push('Live trading requires Polymarket CLOB API implementation');
   }
 
   if (errors.length > 0) {

@@ -14,6 +14,9 @@ package-lock.json
 data/
 portfolio.json
 strategy-results.json
+
+# Log files
+logs/
 *.log
 
 # OS files

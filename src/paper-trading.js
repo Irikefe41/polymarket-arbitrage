@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import feeCalculator from './fee-calculator.js';
 
 const STARTING_BALANCE = 10000; // $10,000 virtual money
 
@@ -10,6 +11,7 @@ class PaperTradingPortfolio {
     this.openPositions = []; // Active positions
     this.closedTrades = []; // Historical trades
     this.totalProfitLoss = 0;
+    this.totalFeesAccrued = 0; // Track all fees paid
     
     // Ensure data directory exists
     const dir = path.dirname(this.portfolioFile);
@@ -28,6 +30,7 @@ class PaperTradingPortfolio {
         this.openPositions = data.openPositions || [];
         this.closedTrades = data.closedTrades || [];
         this.totalProfitLoss = data.totalProfitLoss || 0;
+        this.totalFeesAccrued = data.totalFeesAccrued || 0;
       }
     } catch (error) {
       console.error('Error loading portfolio:', error.message);
@@ -41,6 +44,7 @@ class PaperTradingPortfolio {
         openPositions: this.openPositions,
         closedTrades: this.closedTrades,
         totalProfitLoss: this.totalProfitLoss,
+        totalFeesAccrued: this.totalFeesAccrued,
         lastUpdated: new Date().toISOString()
       };
       fs.writeFileSync(this.portfolioFile, JSON.stringify(data, null, 2));
@@ -50,8 +54,12 @@ class PaperTradingPortfolio {
   }
 
   buyShares(marketSlug, marketTitle, outcome, pricePerShare, amountToInvest, marketEndDate) {
-    if (amountToInvest > this.balance) {
-      return { success: false, error: 'Insufficient balance' };
+    // Calculate fee
+    const estimatedFee = feeCalculator.calculateFeeForInvestment(amountToInvest, pricePerShare);
+    const totalCost = amountToInvest + estimatedFee;
+    
+    if (totalCost > this.balance) {
+      return { success: false, error: 'Insufficient balance (including fees)' };
     }
 
     const shares = amountToInvest / pricePerShare;
@@ -64,13 +72,16 @@ class PaperTradingPortfolio {
       pricePerShare,
       shares,
       invested: amountToInvest,
+      estimatedFee,
+      totalCost,
       openedAt: new Date().toISOString(),
       marketEndDate,
       status: 'open'
     };
 
     this.openPositions.push(position);
-    this.balance -= amountToInvest;
+    this.balance -= totalCost; // Deduct investment + fee
+    this.totalFeesAccrued += estimatedFee; // Track fees
     this.save();
 
     return { success: true, position };

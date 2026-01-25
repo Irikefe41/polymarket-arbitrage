@@ -110,7 +110,8 @@ class PriceTracker {
     throw new Error(`Market not resolved after ${attempts} attempts`);
   }
 
-  async getResolution(slug) {
+
+  async getResolution(slug, maxRetries = 20) {
     // Check cache first
     if (this.resolutionCache.has(slug)) {
       return this.resolutionCache.get(slug);
@@ -146,7 +147,7 @@ class PriceTracker {
     }
 
     // Not resolved yet, wait for it
-    return await this.waitForResolution(slug);
+    return await this.waitForResolution(slug, maxRetries);
   }
 
   clearCache(slug) {
