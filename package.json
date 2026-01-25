@@ -1,0 +1,29 @@
+{
+  "name": "polymarket-btc-trading-bot",
+  "version": "0.1.0",
+  "description": "Automated paper trading bot for Polymarket Bitcoin Up/Down 15-minute markets with intelligent strategy execution",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node src/test-api.js"
+  },
+  "keywords": [
+    "polymarket",
+    "trading-bot",
+    "bitcoin",
+    "prediction-markets",
+    "automated-trading",
+    "paper-trading"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "node-fetch": "^3.3.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
