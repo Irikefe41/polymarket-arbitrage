@@ -7,15 +7,18 @@
  * - Market subscription management
  * - Connection health monitoring
  * - Graceful error handling
+ * - Event-driven architecture for instant trade execution
  */
 
 import WebSocket from 'ws';
+import { EventEmitter } from 'events';
 import priceCache from './price-cache.js';
 
 const WS_ENDPOINT = 'wss://ws-subscriptions-clob.polymarket.com/ws/market';
 
-class PolymarketWebSocketClient {
+class PolymarketWebSocketClient extends EventEmitter {
   constructor() {
+    super(); // Initialize EventEmitter
     this.ws = null;
     this.isConnected = false;
     this.isConnecting = false;
@@ -223,6 +226,14 @@ class PolymarketWebSocketClient {
 
       if (!isNaN(buyPrice) && buyPrice >= 0.001 && buyPrice <= 0.999) {
         priceCache.updateBuyPrice(asset_id, buyPrice);
+        
+        // ⚡ Emit price update event for instant strategy evaluation
+        this.emit('priceUpdate', {
+          tokenId: asset_id,
+          buyPrice,
+          timestamp: Date.now(),
+          source: 'orderbook'
+        });
       }
     }
 
@@ -255,6 +266,14 @@ class PolymarketWebSocketClient {
         if (!isNaN(buyPrice) && buyPrice >= 0.001 && buyPrice <= 0.999) {
           priceCache.updateBuyPrice(asset_id, buyPrice);
           this.stats.priceUpdates++;
+          
+          // ⚡ Emit price update event for instant strategy evaluation
+          this.emit('priceUpdate', {
+            tokenId: asset_id,
+            buyPrice,
+            timestamp: Date.now(),
+            source: 'price_change'
+          });
         }
       }
 
@@ -292,6 +311,14 @@ class PolymarketWebSocketClient {
     if (side === 'BUY') {
       priceCache.updateBuyPrice(asset_id, tradePrice);
       this.stats.priceUpdates++;
+      
+      // ⚡ Emit price update event for instant strategy evaluation
+      this.emit('priceUpdate', {
+        tokenId: asset_id,
+        buyPrice: tradePrice,
+        timestamp: Date.now(),
+        source: 'trade'
+      });
     } else if (side === 'SELL') {
       priceCache.updateSellPrice(asset_id, tradePrice);
     }

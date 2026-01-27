@@ -376,8 +376,16 @@ async function streamMarketData(eventSlugOrMarket = null, isTransition = false, 
       }
     }, 1000);
     
-    // Wait for the market to start + small buffer
-    await new Promise(resolve => setTimeout(resolve, waitTime + 5000));
+    // Wait for the market to start + small buffer (reduced for testing)
+    const TEST_MODE = process.env.TEST_MODE === 'true';
+    if (TEST_MODE) {
+      // In test mode, cap wait time at 5 seconds max
+      const maxWait = Math.min(waitTime, 5000);
+      console.log(`${colors.yellow}🧪 TEST MODE: Reduced wait to ${maxWait/1000}s${colors.reset}\n`);
+      await new Promise(resolve => setTimeout(resolve, maxWait + 1000));
+    } else {
+      await new Promise(resolve => setTimeout(resolve, waitTime + 5000));
+    }
     clearInterval(countdownInterval);
     
     console.log(`\n\n${colors.green}✅ Market window opened. Finding market...${colors.reset}\n`);
@@ -449,7 +457,8 @@ async function streamMarketData(eventSlugOrMarket = null, isTransition = false, 
       const minutesRemaining = Math.floor(timeRemaining / 60000);
       
       // If more than configured time has elapsed, wait for next market
-      const MIN_TIME_TO_START = config.bot.minTimeToStart;
+      const TEST_MODE = process.env.TEST_MODE === 'true';
+      const MIN_TIME_TO_START = TEST_MODE ? 2000 : config.bot.minTimeToStart; // 2 seconds in test mode, normal otherwise
       
       if (timeElapsed > MIN_TIME_TO_START && timeRemaining > 0) {
         console.log(`\n${colors.yellow}⚠️  MID-MARKET DETECTION${colors.reset}`);
@@ -474,8 +483,16 @@ async function streamMarketData(eventSlugOrMarket = null, isTransition = false, 
           }
         }, 1000);
         
-        // Wait for market to end + buffer time
-        await new Promise(resolve => setTimeout(resolve, timeRemaining + 10000));
+        // Wait for market to end + buffer time (reduced for testing)
+        const TEST_MODE = process.env.TEST_MODE === 'true';
+        if (TEST_MODE) {
+          // In test mode, cap wait time at 5 seconds max
+          const maxWait = Math.min(timeRemaining, 5000);
+          console.log(`${colors.yellow}🧪 TEST MODE: Reduced wait to ${maxWait/1000}s${colors.reset}\n`);
+          await new Promise(resolve => setTimeout(resolve, maxWait + 2000));
+        } else {
+          await new Promise(resolve => setTimeout(resolve, timeRemaining + 10000));
+        }
         clearInterval(countdownInterval);
         console.log(`\n\n${colors.green}✅ Market ended. Finding next market...${colors.reset}\n`);
         
@@ -626,12 +643,12 @@ async function streamMarketData(eventSlugOrMarket = null, isTransition = false, 
     });
   }
 
-  console.log(`\n${colors.bright}${colors.green}🔴 LIVE TRADING MODE${colors.reset}`);
+  console.log(`\n${colors.bright}${colors.green}🔴 LIVE TRADING MODE - EVENT-DRIVEN${colors.reset}`);
   console.log(`${colors.cyan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
   console.log(`${colors.green}⚡ WebSocket Stream:${colors.reset} Real-time prices (243 msgs/sec when active)`);
   console.log(`${colors.green}⚡ HTTP Calls:${colors.reset} ${colors.bright}ZERO${colors.reset} (100% WebSocket-only)`);
-  console.log(`${colors.green}⚡ Strategy Check:${colors.reset} Every ${POLL_INTERVAL/1000}s (reads WebSocket cache in 0.001ms)`);
-  console.log(`${colors.green}⚡ Full Logging:${colors.reset} Continuous updates for debugging & monitoring`);
+  console.log(`${colors.green}⚡ Trade Execution:${colors.reset} ${colors.bright}INSTANT${colors.reset} on price updates (<100ms reaction)`);
+  console.log(`${colors.green}⚡ Display Updates:${colors.reset} Every ${POLL_INTERVAL/1000}s for monitoring`);
   console.log(`${colors.cyan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
   console.log(`${colors.cyan}Press Ctrl+C to stop${colors.reset}`);
   console.log(`${colors.yellow}📊 COMMANDS:${colors.reset}`);
@@ -640,11 +657,12 @@ async function streamMarketData(eventSlugOrMarket = null, isTransition = false, 
   console.log(`   ${colors.cyan}stats${colors.reset} - Trading statistics`);
   console.log(`   ${colors.cyan}strategy${colors.reset} - View strategy performance\n`);
   
-  console.log(`${colors.bright}${colors.green}🤖 AUTOMATED STRATEGY${colors.reset}`);
+  console.log(`${colors.bright}${colors.green}🤖 AUTOMATED STRATEGY (Event-Driven)${colors.reset}`);
   console.log(`   Goal: Buy positions with >110% ROI independently`);
   console.log(`   Investment: $100 per position`);
   console.log(`   Min Return: $${MIN_EXPECTED_RETURN} per position (110% ROI)`);
-  console.log(`   Executes: Up if return >$210, Down if return >$210 (independent)\n`);
+  console.log(`   Execution: ${colors.bright}Instant${colors.reset} on profitable price updates`);
+  console.log(`   Reaction Time: <100ms from price change to order\n`);
 
   let iteration = 0;
   let intervalId = null;
@@ -653,6 +671,15 @@ async function streamMarketData(eventSlugOrMarket = null, isTransition = false, 
   // Store prices for tracking
   let startPrices = { up: null, down: null, timestamp: null }; // Initial prices
   let currentPrices = { up: 0, down: 0 }; // Current prices
+  
+  // Store token IDs for correct outcome mapping (set once per market)
+  let upTokenId = null;
+  let downTokenId = null;
+  
+  // ⚡ EVENT-DRIVEN EXECUTION: React instantly to price changes
+  let isEvaluating = false; // Prevent concurrent evaluations
+  let lastEvaluationTime = 0;
+  const MIN_EVALUATION_INTERVAL = 100; // Minimum 100ms between evaluations (prevent spam)
   
   // Setup readline for interactive commands
   const rl = readline.createInterface({
@@ -680,6 +707,84 @@ async function streamMarketData(eventSlugOrMarket = null, isTransition = false, 
     } else if (cmd === 'help') {
       displayHelp();
     }
+  });
+  
+  // ⚡ EVENT-DRIVEN: Instant strategy evaluation on price updates
+  async function evaluateStrategyInstantly(priceUpdate) {
+    // Prevent concurrent evaluations
+    if (isEvaluating) {
+      return;
+    }
+    
+    // Rate limit: Don't evaluate more than once every 100ms
+    const now = Date.now();
+    if (now - lastEvaluationTime < MIN_EVALUATION_INTERVAL) {
+      return;
+    }
+    
+    // Don't evaluate if market has ended
+    if (hasEnded) {
+      return;
+    }
+    
+    // Don't evaluate if we don't have prices for both outcomes yet
+    if (currentPrices.up === 0 || currentPrices.down === 0) {
+      return;
+    }
+    
+    isEvaluating = true;
+    lastEvaluationTime = now;
+    
+    try {
+      // Check if prices are valid (not at extremes)
+      const pricesAreValid = currentPrices.up >= 0.01 && currentPrices.up <= 0.99 && 
+                             currentPrices.down >= 0.01 && currentPrices.down <= 0.99;
+      
+      if (!pricesAreValid) {
+        isEvaluating = false;
+        return;
+      }
+      
+      // Evaluate and execute strategy
+      const decision = strategy.shouldExecute(event.slug, currentPrices.up, currentPrices.down);
+      
+      if (decision.shouldExecute) {
+        console.log(`\n${colors.green}⚡ INSTANT EXECUTION (Price Update: ${priceUpdate.source})${colors.reset}`);
+        console.log(`${colors.dim}Reaction time: ${Date.now() - priceUpdate.timestamp}ms${colors.reset}`);
+        
+        await strategy.execute(
+          event.slug,
+          event.title,
+          event.endDate,
+          currentPrices.up,
+          currentPrices.down,
+          colors
+        );
+      }
+    } catch (error) {
+      console.error(`${colors.red}Error in instant evaluation:${colors.reset}`, error.message);
+    } finally {
+      isEvaluating = false;
+    }
+  }
+  
+  // Subscribe to WebSocket price updates for instant execution
+  wsClient.on('priceUpdate', (priceUpdate) => {
+    // Map tokenId to outcome using the correct mapping we established earlier
+    // upTokenId and downTokenId are correctly mapped by outcome NAME, not position
+    if (priceUpdate.tokenId === upTokenId) {
+      currentPrices.up = priceUpdate.buyPrice;
+    } else if (priceUpdate.tokenId === downTokenId) {
+      currentPrices.down = priceUpdate.buyPrice;
+    } else {
+      // TokenId not recognized (shouldn't happen)
+      return;
+    }
+    
+    // Evaluate strategy instantly (async, non-blocking)
+    evaluateStrategyInstantly(priceUpdate).catch(err => {
+      console.error(`${colors.red}Instant evaluation error:${colors.reset}`, err.message);
+    });
   });
   
   function handleBuyCommand(outcome, price, amount) {
@@ -904,9 +1009,22 @@ async function streamMarketData(eventSlugOrMarket = null, isTransition = false, 
       return;
     }
 
-    // Get prices from WebSocket cache
-    const upCache = priceCache.get(clobTokenIds[0]);
-    const downCache = priceCache.get(clobTokenIds[1]);
+    // Map outcomes to token IDs correctly by name, not array position
+    const upIndex = outcomes.findIndex(o => o.toLowerCase() === 'up');
+    const downIndex = outcomes.findIndex(o => o.toLowerCase() === 'down');
+    
+    if (upIndex === -1 || downIndex === -1) {
+      console.log(`${colors.red}⚠️  Could not find Up/Down outcomes in market data${colors.reset}\n`);
+      return;
+    }
+    
+    // Set token IDs at function scope for event-driven access
+    upTokenId = clobTokenIds[upIndex];
+    downTokenId = clobTokenIds[downIndex];
+    
+    // Get prices from WebSocket cache using correct token IDs
+    const upCache = priceCache.get(upTokenId);
+    const downCache = priceCache.get(downTokenId);
     
     // Check if cache data is fresh (not stale)
     if (!upCache || !downCache || upCache.age > config.bot.websocketStaleThreshold || downCache.age > config.bot.websocketStaleThreshold) {
@@ -917,8 +1035,8 @@ async function streamMarketData(eventSlugOrMarket = null, isTransition = false, 
     }
 
     // Get orderbook data from cache
-    const upOrderbook = priceCache.getOrderbook(clobTokenIds[0]);
-    const downOrderbook = priceCache.getOrderbook(clobTokenIds[1]);
+    const upOrderbook = priceCache.getOrderbook(upTokenId);
+    const downOrderbook = priceCache.getOrderbook(downTokenId);
 
     const avgAge = Math.round((upCache.age + downCache.age) / 2);
     console.log(`${colors.green}⚡ WebSocket Cache: ${avgAge}ms old | Read time: 0.001ms | HTTP calls: 0${colors.reset}\n`);
@@ -946,10 +1064,10 @@ async function streamMarketData(eventSlugOrMarket = null, isTransition = false, 
       downOrderbook ? { bids: downOrderbook.bids, asks: downOrderbook.asks } : null
     ];
     
-    // Process fetched data for both outcomes
+    // Process fetched data for both outcomes (now correctly mapped)
     const fetchedData = [
-      { outcome: outcomes[0], tokenId: clobTokenIds[0], buyPrice: upData[0], sellPrice: upData[1], orderbook: upData[2] },
-      { outcome: outcomes[1], tokenId: clobTokenIds[1], buyPrice: downData[0], sellPrice: downData[1], orderbook: downData[2] }
+      { outcome: 'Up', tokenId: upTokenId, buyPrice: upData[0], sellPrice: upData[1], orderbook: upData[2] },
+      { outcome: 'Down', tokenId: downTokenId, buyPrice: downData[0], sellPrice: downData[1], orderbook: downData[2] }
     ];
     
     for (const data of fetchedData) {
@@ -1035,24 +1153,20 @@ async function streamMarketData(eventSlugOrMarket = null, isTransition = false, 
       console.log('');
     }
     
-    // Continuously evaluate and execute strategy throughout the market
+    // ⚡ NOTE: Strategy execution is now EVENT-DRIVEN (instant reaction to price changes)
+    // This 5-second loop is for DISPLAY purposes only
     // Skip evaluation if prices are at extremes (< $0.01 or > $0.99)
     const pricesAreValid = currentPrices.up >= 0.01 && currentPrices.up <= 0.99 && 
                            currentPrices.down >= 0.01 && currentPrices.down <= 0.99;
     
     if (outcomePrices.length === 2 && pricesAreValid) {
+      // Check strategy status (display only - actual execution happens on price events)
       const decision = strategy.shouldExecute(event.slug, currentPrices.up, currentPrices.down);
       
       if (decision.shouldExecute) {
-        // Execute the strategy (will only buy positions we don't already have)
-        const result = await strategy.execute(
-          event.slug,
-          event.title,
-          event.endDate,
-          currentPrices.up,
-          currentPrices.down,
-          colors
-        );
+        // Show that conditions are met (but execution happens via events)
+        console.log(`\n${colors.dim}${colors.cyan}ℹ️  Conditions met for execution (event-driven trading active)${colors.reset}`);
+        console.log(`${colors.dim}   Trades execute instantly on price updates (<100ms reaction time)${colors.reset}\n`);
       } else {
         // Only show detailed analysis on first iteration
         if (iteration === 1) {

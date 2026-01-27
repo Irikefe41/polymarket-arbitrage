@@ -36,17 +36,31 @@ const config = {
 
   // File paths
   files: {
-    portfolio: process.env.PORTFOLIO_FILE || './data/portfolio.json',
-    strategyResults: process.env.STRATEGY_RESULTS_FILE || './data/strategy-results.json',
+    portfolio: (process.env.LIVE_TRADING_ENABLED === 'true')
+      ? (process.env.PORTFOLIO_FILE_LIVE || './data/portfolio-live.json')
+      : (process.env.PORTFOLIO_FILE || './data/portfolio.json'),
+    strategyResults: (process.env.LIVE_TRADING_ENABLED === 'true')
+      ? (process.env.STRATEGY_RESULTS_FILE_LIVE || './data/strategy-results-live.json')
+      : (process.env.STRATEGY_RESULTS_FILE || './data/strategy-results.json'),
     logs: process.env.LOG_DIRECTORY || './logs',
   },
 
-  // Future: Live trading config (not implemented)
+  // Live trading configuration
   wallet: {
-    privateKey: process.env.WALLET_PRIVATE_KEY || null,
-    apiKey: process.env.POLYMARKET_API_KEY || null,
-    rpcUrl: process.env.RPC_URL || null,
+    privateKey: process.env.POLYGON_PRIVATE_KEY || null,
+    address: process.env.WALLET_ADDRESS || null,
+    rpcUrl: process.env.RPC_URL || 'https://polygon-rpc.com',
     liveTradingEnabled: process.env.LIVE_TRADING_ENABLED === 'true',
+  },
+
+  // Live trading settings
+  liveTrading: {
+    enabled: process.env.LIVE_TRADING_ENABLED === 'true',
+    dryRun: process.env.DRY_RUN_MODE === 'true',
+    positionSize: parseFloat(process.env.POSITION_SIZE) || 1, // $1 for testing
+    minExpectedReturn: parseFloat(process.env.MIN_EXPECTED_RETURN_LIVE) || 2.10,
+    signatureType: parseInt(process.env.SIGNATURE_TYPE) || 0, // 0 = EOA
+    verbose: process.env.VERBOSE_LOGGING === 'true',
   },
 };
 
@@ -64,24 +78,27 @@ export function validateConfig() {
   }
 
   // Validate live trading configuration
-  if (config.wallet.liveTradingEnabled) {
+  if (config.liveTrading.enabled) {
     console.warn('\n⚠️  ⚠️  ⚠️  WARNING: LIVE TRADING MODE ENABLED ⚠️  ⚠️  ⚠️');
     console.warn('⚠️  Real money will be used for trades!');
-    console.warn('⚠️  Live trading API integration is INCOMPLETE');
-    console.warn('⚠️  Polymarket CLOB integration must be implemented first\n');
-    
-    if (!config.wallet.privateKey) {
-      errors.push('WALLET_PRIVATE_KEY is required for live trading');
+
+    if (config.liveTrading.dryRun) {
+      console.warn('✅ DRY RUN MODE: Orders will be signed but not submitted\n');
+    } else {
+      console.warn('🚨 LIVE MODE: Orders WILL BE SUBMITTED to Polymarket\n');
     }
-    
+
+    if (!config.wallet.privateKey) {
+      errors.push('POLYGON_PRIVATE_KEY is required for live trading');
+    }
+
+    if (config.wallet.privateKey && !config.wallet.privateKey.startsWith('0x')) {
+      errors.push('POLYGON_PRIVATE_KEY must start with 0x');
+    }
+
     if (!config.wallet.rpcUrl) {
       console.warn('⚠️  RPC_URL not set, using default Polygon RPC (may be slow)');
     }
-    
-    // For now, prevent live trading until fully implemented
-    console.error('❌ Live trading is not yet fully implemented.');
-    console.error('❌ Please complete the Polymarket API integration in src/trading-executor.js');
-    errors.push('Live trading requires Polymarket CLOB API implementation');
   }
 
   if (errors.length > 0) {

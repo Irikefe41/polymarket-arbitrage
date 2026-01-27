@@ -6,6 +6,8 @@
  */
 
 import config from '../config/index.js';
+import OrderManager from './order-manager.js';
+import fetch from 'node-fetch';
 
 /**
  * Base Trading Executor Interface
@@ -99,7 +101,7 @@ class PaperTradingExecutor extends TradingExecutor {
   async closePositions(marketSlug, winningOutcome) {
     // Paper trading: close based on predetermined outcome
     const results = this.portfolio.closeMarketPositions(marketSlug, winningOutcome);
-    
+
     return results.map(result => ({
       ...result,
       mode: 'paper'
@@ -116,55 +118,205 @@ class LiveTradingExecutor extends TradingExecutor {
     super(portfolio);
     this.mode = 'live';
     this.wallet = wallet;
-    
+    this.orderManager = null;
+    this.marketDataCache = new Map(); // Cache market data to avoid repeated API calls
+
     if (!wallet || !wallet.privateKey) {
       throw new Error('Live trading requires a configured wallet with private key');
     }
   }
 
+  /**
+   * Initialize OrderManager (lazy initialization)
+   * @private
+   */
+  async _ensureOrderManager() {
+    if (this.orderManager && this.orderManager.isInitialized) {
+      return;
+    }
+
+    console.log('🔧 Initializing OrderManager for live trading...');
+
+    this.orderManager = new OrderManager(this.wallet.privateKey, {
+      rpcUrl: config.wallet.rpcUrl,
+      dryRun: config.liveTrading.dryRun,
+      verbose: config.liveTrading.verbose
+    });
+
+    await this.orderManager.initialize();
+  }
+
+  /**
+   * Fetch event/market data from Gamma API
+   * @param {string} marketSlug - Market slug
+   * @returns {object} Event data with markets
+   * @private
+   */
+  async _fetchEventData(marketSlug) {
+    // Check cache first
+    if (this.marketDataCache.has(marketSlug)) {
+      return this.marketDataCache.get(marketSlug);
+    }
+
+    try {
+      const response = await fetch(`${config.api.gammaUrl}/events?slug=${marketSlug}`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const data = await response.json();
+      const event = data[0];
+
+      if (!event) {
+        throw new Error(`No event found for slug: ${marketSlug}`);
+      }
+
+      // Cache for 5 minutes
+      this.marketDataCache.set(marketSlug, event);
+      setTimeout(() => this.marketDataCache.delete(marketSlug), 5 * 60 * 1000);
+
+      return event;
+    } catch (error) {
+      throw new Error(`Failed to fetch event data: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get token ID for a specific outcome
+   * @param {string} marketSlug - Market slug
+   * @param {string} outcome - Outcome name (e.g., 'Up' or 'Down')
+   * @returns {string} Token ID
+   * @private
+   */
+  async _getTokenIdForOutcome(marketSlug, outcome) {
+    try {
+      // Fetch event data
+      const event = await this._fetchEventData(marketSlug);
+
+      if (!event.markets || event.markets.length === 0) {
+        throw new Error('No markets found for this event');
+      }
+
+      const market = event.markets[0];
+
+      // Parse outcomes and token IDs
+      let outcomes, clobTokenIds;
+
+      try {
+        outcomes = typeof market.outcomes === 'string'
+          ? JSON.parse(market.outcomes)
+          : market.outcomes;
+
+        clobTokenIds = market.clobTokenIds || [];
+
+        if (typeof clobTokenIds === 'string') {
+          clobTokenIds = JSON.parse(clobTokenIds);
+        }
+      } catch (parseError) {
+        throw new Error(`Failed to parse market data: ${parseError.message}`);
+      }
+
+      // Find index of outcome (case-insensitive)
+      const outcomeIndex = outcomes.findIndex(
+        o => o.toLowerCase() === outcome.toLowerCase()
+      );
+
+      if (outcomeIndex === -1) {
+        throw new Error(`Outcome "${outcome}" not found in market. Available: ${outcomes.join(', ')}`);
+      }
+
+      if (!clobTokenIds[outcomeIndex]) {
+        throw new Error(`No token ID found for outcome "${outcome}"`);
+      }
+
+      return clobTokenIds[outcomeIndex];
+    } catch (error) {
+      throw new Error(`Failed to get token ID: ${error.message}`);
+    }
+  }
+
+  /**
+   * Execute a buy order (live trading)
+   */
   async executeBuy(marketSlug, marketTitle, marketEndDate, outcome, price, investmentAmount) {
     try {
-      // TODO: Implement actual Polymarket API calls
-      // This is a placeholder for the actual implementation
-      
-      // Steps for live trading:
-      // 1. Get token ID for the outcome
-      // 2. Check order book liquidity
-      // 3. Place limit or market order via Polymarket CLOB API
-      // 4. Wait for order fill confirmation
-      // 5. Record position in portfolio
-      
-      throw new Error('Live trading not yet implemented. Please use paper trading mode.');
-      
-      // Example structure (to be implemented):
-      /*
-      const order = await this.placeOrder({
-        marketSlug,
-        outcome,
-        side: 'BUY',
+      // Ensure OrderManager is initialized
+      await this._ensureOrderManager();
+
+      console.log(`\n🔴 LIVE TRADING: Executing BUY order`);
+      console.log(`   Outcome: ${outcome}`);
+      console.log(`   Price: $${price.toFixed(4)}`);
+      console.log(`   Amount: $${investmentAmount.toFixed(2)}`);
+
+      // Get token ID for this outcome and market info (tickSize, negRisk)
+      console.log(`   Fetching market details...`);
+      const event = await this._fetchEventData(marketSlug);
+      const market = event.markets[0];
+
+      const tokenId = await this._getTokenIdForOutcome(marketSlug, outcome);
+      console.log(`   Token ID: ${tokenId}`);
+
+      // Extract market metadata from Gamma data
+      const marketInfo = {
+        tickSize: market.minimumTickSize || '0.01',
+        negRisk: market.negRisk || false
+      };
+      console.log(`   Tick Size: ${marketInfo.tickSize}, Neg Risk: ${marketInfo.negRisk}`);
+
+      // Place order via OrderManager
+      console.log(`   Placing order on CLOB...`);
+      const orderResult = await this.orderManager.placeBuyOrder(
+        tokenId,
         price,
-        size: investmentAmount / price,
-      });
-      
-      const position = this.portfolio.openPosition(
+        investmentAmount,
+        marketInfo
+      );
+
+      if (!orderResult.success) {
+        return {
+          success: false,
+          mode: 'live',
+          error: orderResult.error,
+          message: `Live trade failed: ${orderResult.error}`
+        };
+      }
+
+      // Record position in portfolio (optimistic - assumes order will fill)
+      // In production, you'd want to wait for order fill confirmation
+      const result = this.portfolio.buyShares(
         marketSlug,
         marketTitle,
         outcome,
-        order.fillPrice,
-        order.fillSize * order.fillPrice,
+        price,
+        investmentAmount,
         marketEndDate
       );
-      
+
+      if (!result.success) {
+        // Order placed but portfolio update failed
+        console.warn(`⚠️  Order placed but portfolio update failed: ${result.error}`);
+        return {
+          success: true,
+          mode: 'live',
+          orderID: orderResult.orderID,
+          warning: `Order placed but portfolio tracking failed: ${result.error}`,
+          message: `Live trade executed but tracking error: ${result.error}`
+        };
+      }
+
       return {
         success: true,
         mode: 'live',
-        position: position.position,
-        orderId: order.id,
-        fillPrice: order.fillPrice,
-        message: `Live trade executed: ${outcome} @ $${order.fillPrice.toFixed(4)}`
+        position: result.position,
+        orderID: orderResult.orderID,
+        orderStatus: orderResult.status,
+        tokenId: tokenId,
+        fillPrice: price, // Actual fill price would come from order status
+        message: `Live trade executed: ${outcome} @ $${price.toFixed(4)} (Order ID: ${orderResult.orderID})`
       };
-      */
+
     } catch (error) {
+      console.error(`❌ Live trading error: ${error.message}`);
+
       return {
         success: false,
         mode: 'live',
@@ -174,64 +326,51 @@ class LiveTradingExecutor extends TradingExecutor {
     }
   }
 
+  /**
+   * Close positions for a market
+   * 
+   * NOTE: Polymarket automatically redeems winning shares to USDC when markets resolve.
+   * This function primarily updates our internal portfolio state.
+   * 
+   * For manual redemption, you would need to call the CTF Exchange contract directly.
+   */
   async closePositions(marketSlug, winningOutcome) {
     try {
-      // TODO: Implement actual position closing
-      // This would involve:
-      // 1. Getting market resolution from Polymarket
-      // 2. Redeeming winning shares
-      // 3. Updating portfolio
-      
-      throw new Error('Live position closing not yet implemented');
-      
-      // Example structure:
-      /*
+      console.log(`\n🔴 LIVE TRADING: Closing positions`);
+      console.log(`   Market: ${marketSlug}`);
+      console.log(`   Winner: ${winningOutcome}`);
+
       const positions = this.portfolio.getOpenPositionsForMarket(marketSlug);
-      const results = [];
-      
-      for (const position of positions) {
-        if (position.outcome === winningOutcome) {
-          // Redeem winning shares
-          const redeemTx = await this.redeemShares(position);
-          results.push({
-            success: true,
-            mode: 'live',
-            position: { ...position, won: true },
-            txHash: redeemTx.hash
-          });
-        } else {
-          results.push({
-            success: true,
-            mode: 'live',
-            position: { ...position, won: false }
-          });
+
+      if (positions.length === 0) {
+        console.log(`   No open positions to close`);
+        return [];
+      }
+
+      console.log(`   Found ${positions.length} position(s) to close`);
+
+      // Update portfolio state
+      // Polymarket automatically redeems winning shares, so we just track the result
+      const results = this.portfolio.closeMarketPositions(marketSlug, winningOutcome);
+
+      // Log results
+      for (const result of results) {
+        if (result.success) {
+          const pos = result.position;
+          console.log(`   ${pos.outcome}: ${pos.won ? '✅ WON' : '❌ LOST'} (P&L: $${pos.profitLoss.toFixed(2)})`);
         }
       }
-      
-      // Update portfolio
-      this.portfolio.closeMarketPositions(marketSlug, winningOutcome);
-      
-      return results;
-      */
+
+      return results.map(result => ({
+        ...result,
+        mode: 'live',
+        note: 'Polymarket auto-redeems winning shares'
+      }));
+
     } catch (error) {
+      console.error(`❌ Failed to close live positions: ${error.message}`);
       throw new Error(`Failed to close live positions: ${error.message}`);
     }
-  }
-
-  /**
-   * Place an order on Polymarket (to be implemented)
-   */
-  async placeOrder(orderParams) {
-    // TODO: Implement Polymarket CLOB API integration
-    throw new Error('Polymarket order placement not yet implemented');
-  }
-
-  /**
-   * Redeem winning shares (to be implemented)
-   */
-  async redeemShares(position) {
-    // TODO: Implement share redemption via smart contract
-    throw new Error('Share redemption not yet implemented');
   }
 }
 
@@ -240,20 +379,20 @@ class LiveTradingExecutor extends TradingExecutor {
  */
 export function createTradingExecutor(portfolio) {
   const isLiveTrading = config.wallet.liveTradingEnabled;
-  
+
   if (isLiveTrading) {
     console.log('🔴 Initializing LIVE TRADING mode');
     console.log('⚠️  Real money will be used!');
-    
+
     // Validate wallet configuration
     if (!config.wallet.privateKey) {
       throw new Error('WALLET_PRIVATE_KEY is required for live trading');
     }
-    
+
     if (!config.wallet.apiKey) {
       console.warn('⚠️  Warning: POLYMARKET_API_KEY not set. Some features may be limited.');
     }
-    
+
     return new LiveTradingExecutor(portfolio, config.wallet);
   } else {
     console.log('📝 Running in PAPER TRADING mode (simulated trades)');

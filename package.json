@@ -15,7 +15,9 @@
     "logs:errors": "node src/view-logs.js errors",
     "logs:stats": "node src/view-logs.js stats",
     "logs:clean": "node src/view-logs.js clean",
-    "logs:ws": "tail -f logs/websocket-test.log"
+    "logs:ws": "tail -f logs/websocket-test.log",
+    "test:orders": "node test/test-order-manager.js",
+    "set-allowance": "node scripts/set-allowance.js"
   },
   "keywords": [
     "polymarket",
@@ -28,7 +30,9 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@polymarket/clob-client": "^5.2.1",
     "dotenv": "^16.6.1",
+    "ethers": "^5.8.0",
     "node-fetch": "^3.3.2",
     "ws": "^8.18.0"
   },
