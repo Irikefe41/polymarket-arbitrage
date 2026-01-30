@@ -366,37 +366,10 @@ class OrderManager {
       const roundedPrice = Math.round(price / tickSizeNum) * tickSizeNum;
 
       // Calculate size (number of shares)
-      let size = investmentAmount / roundedPrice;
+      const size = investmentAmount / roundedPrice;
 
-      // Polymarket minimums:
-      // - Minimum order value: $1.00
-      // - Minimum order size: 5 shares
-      const MIN_ORDER_VALUE = 1.00;
-      const MIN_ORDER_SIZE = 5.0;
-
-      // Ensure order value meets minimum
-      if (investmentAmount < MIN_ORDER_VALUE) {
-        return {
-          success: false,
-          error: `Investment amount $${investmentAmount.toFixed(2)} is below minimum $${MIN_ORDER_VALUE.toFixed(2)}`
-        };
-      }
-
-      // Ensure order size meets minimum (adjust investment if needed)
-      if (size < MIN_ORDER_SIZE) {
-        const adjustedInvestment = MIN_ORDER_SIZE * roundedPrice;
-        if (this.options.verbose) {
-          console.log(`   ⚠️  Order size ${size.toFixed(2)} below minimum ${MIN_ORDER_SIZE}, adjusting investment from $${investmentAmount.toFixed(2)} to $${adjustedInvestment.toFixed(2)}`);
-        }
-        size = MIN_ORDER_SIZE;
-        // Note: We're using the adjusted size, but the actual cost will be size * roundedPrice
-      }
-
-      // Round size to reasonable precision (4 decimal places)
-      size = Math.round(size * 10000) / 10000;
-
-      // Calculate actual order value (may be adjusted for minimum size)
-      const actualOrderValue = size * roundedPrice;
+      // Use exact investment amount configured (no validation, no adjustment)
+      const actualOrderValue = investmentAmount;
 
       if (this.options.verbose) {
         console.log(`\n📊 Placing BUY order:`);
@@ -491,7 +464,8 @@ class OrderManager {
         orderID: result.orderID,
         price: roundedPrice,
         size: size,
-        actualInvestment: actualOrderValue, // Return actual amount spent (may differ from requested if adjusted for minimums)
+        actualInvestment: actualOrderValue, // Same as requested investment (no adjustments)
+        
         status: result.status || 'LIVE'
       };
     } catch (error) {

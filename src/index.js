@@ -669,6 +669,9 @@ async function streamMarketData(eventSlugOrMarket = null, isTransition = false, 
   let redeemIntervalId = null;
   let hasEnded = false;
   
+  // Store references globally for cleanup
+  globalWsClient = wsClient;
+  
   // Store prices for tracking
   let startPrices = { up: null, down: null, timestamp: null }; // Initial prices
   let currentPrices = { up: 0, down: 0 }; // Current prices
@@ -1366,6 +1369,7 @@ async function streamMarketData(eventSlugOrMarket = null, isTransition = false, 
   // Set up interval for continuous polling (only if market hasn't ended)
   if (!hasEnded) {
     intervalId = setInterval(pollData, POLL_INTERVAL);
+    globalIntervalId = intervalId; // Store for cleanup
   }
 
   // Auto-redeem: when live trading + autoRedeem enabled, periodically redeem winning positions
@@ -1406,6 +1410,7 @@ async function streamMarketData(eventSlugOrMarket = null, isTransition = false, 
     setTimeout(runRedeem, 30000);
     // Then every autoRedeemIntervalMinutes
     redeemIntervalId = setInterval(runRedeem, intervalMs);
+    globalRedeemIntervalId = redeemIntervalId; // Store for cleanup
     console.log(`${colors.green}✅ Auto-redeem enabled${colors.reset} (every ${config.liveTrading.autoRedeemIntervalMinutes}m, first run in 30s)`);
   }
 }
@@ -1606,6 +1611,45 @@ async function resumeOrStartNew() {
 // Start streaming - automatically find current active market
 console.log(`${colors.bright}${colors.blue}🚀 Bitcoin Up/Down Market Streamer${colors.reset}`);
 console.log(`${colors.cyan}Initializing...${colors.reset}\n`);
+
+// Global cleanup handler
+let globalIntervalId = null;
+let globalRedeemIntervalId = null;
+let globalWsClient = null;
+
+function gracefulShutdown(signal) {
+  console.log(`\n${colors.yellow}⚠️  Received ${signal}. Cleaning up...${colors.reset}`);
+  
+  // Clear all intervals
+  if (globalIntervalId) {
+    clearInterval(globalIntervalId);
+    console.log(`${colors.cyan}✓ Cleared price update interval${colors.reset}`);
+  }
+  
+  if (globalRedeemIntervalId) {
+    clearInterval(globalRedeemIntervalId);
+    console.log(`${colors.cyan}✓ Cleared auto-redeem interval${colors.reset}`);
+  }
+  
+  // Close WebSocket
+  if (globalWsClient && typeof globalWsClient.disconnect === 'function') {
+    globalWsClient.disconnect();
+    console.log(`${colors.cyan}✓ Closed WebSocket connection${colors.reset}`);
+  }
+  
+  // Save portfolio
+  if (portfolio && typeof portfolio.save === 'function') {
+    portfolio.save();
+    console.log(`${colors.cyan}✓ Saved portfolio data${colors.reset}`);
+  }
+  
+  console.log(`${colors.green}✅ Cleanup complete. Goodbye!${colors.reset}\n`);
+  process.exit(0);
+}
+
+// Register signal handlers
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 // Clean up expired positions, then resume or start new
 cleanupExpiredPositions().then(() => {
