@@ -133,7 +133,25 @@ class HedgeStrategy {
     };
   }
 
-  shouldExecute(marketSlug, upPrice, downPrice) {
+  shouldExecute(marketSlug, upPrice, downPrice, marketEndDate = null) {
+    // Check market age: don't trade if market has been open for more than 10 minutes
+    if (marketEndDate) {
+      const endTime = new Date(marketEndDate);
+      const startTime = new Date(endTime.getTime() - 15 * 60 * 1000); // Market starts 15 minutes before end
+      const now = new Date();
+      const elapsedMinutes = (now - startTime) / (60 * 1000);
+      
+      if (elapsedMinutes > 10) {
+        return {
+          shouldExecute: false,
+          shouldBuyUp: false,
+          shouldBuyDown: false,
+          reason: `Market too old (${elapsedMinutes.toFixed(1)} min elapsed, max 10 min)`,
+          analysis: this.evaluateOpportunity(upPrice, downPrice)
+        };
+      }
+    }
+
     // Get existing positions
     const existingPositions = this.portfolio.getOpenPositionsForMarket(marketSlug);
     const hasUpPosition = existingPositions.some(p => p.outcome.toLowerCase() === 'up');

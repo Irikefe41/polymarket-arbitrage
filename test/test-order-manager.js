@@ -122,9 +122,10 @@ async function getCurrentPrice(tokenId) {
 }
 
 async function testOrderManager() {
-  console.log(`${colors.bright}${colors.cyan}╔════════════════════════════════════════╗${colors.reset}`);
-  console.log(`${colors.bright}${colors.cyan}║   Order Manager Test Suite            ║${colors.reset}`);
-  console.log(`${colors.bright}${colors.cyan}╚════════════════════════════════════════╝${colors.reset}\n`);
+  console.log(`${colors.bright}${colors.red}╔════════════════════════════════════════╗${colors.reset}`);
+  console.log(`${colors.bright}${colors.red}║   Order Manager Test Suite            ║${colors.reset}`);
+  console.log(`${colors.bright}${colors.red}║   ⚠️  LIVE TRADING MODE ⚠️           ║${colors.reset}`);
+  console.log(`${colors.bright}${colors.red}╚════════════════════════════════════════╝${colors.reset}\n`);
 
   // Check if private key is configured
   if (!config.wallet.privateKey) {
@@ -134,12 +135,44 @@ async function testOrderManager() {
     process.exit(1);
   }
 
+  // Use config value for dryRun, default to true (safe mode)
+  // IMPORTANT: Default to DRY RUN to prevent accidental fund usage
+  const dryRunMode = config.liveTrading.dryRun !== undefined ? config.liveTrading.dryRun : true;
+
+  if (!dryRunMode) {
+    console.log(`${colors.bright}${colors.red}╔════════════════════════════════════════╗${colors.reset}`);
+    console.log(`${colors.bright}${colors.red}║   ⚠️  LIVE TRADING MODE ENABLED ⚠️   ║${colors.reset}`);
+    console.log(`${colors.bright}${colors.red}╚════════════════════════════════════════╝${colors.reset}\n`);
+    console.log(`${colors.red}⚠️  WARNING: REAL ORDERS WILL BE PLACED!${colors.reset}`);
+    console.log(`${colors.red}⚠️  REAL MONEY WILL BE USED!${colors.reset}`);
+    console.log(`${colors.red}⚠️  YOUR WALLET BALANCE WILL BE DEDUCTED!${colors.reset}\n`);
+    
+    // Check current balance first
+    const tempOrderManager = new OrderManager(config.wallet.privateKey, {
+      dryRun: false,
+      verbose: false,
+    });
+    await tempOrderManager.initialize();
+    const currentBalance = await tempOrderManager.getBalance();
+    console.log(`${colors.yellow}Current USDC Balance: $${currentBalance.usdc.toFixed(6)}${colors.reset}`);
+    console.log(`${colors.yellow}This test will place $5 orders (2 orders = $10 total)${colors.reset}\n`);
+    
+    console.log(`${colors.yellow}Press Ctrl+C within 10 seconds to cancel...${colors.reset}\n`);
+    
+    // Give user 10 seconds to cancel (increased from 5)
+    await new Promise(resolve => setTimeout(resolve, 10000));
+    console.log(`${colors.green}Proceeding with live order placement...\n${colors.reset}`);
+  } else {
+    console.log(`${colors.yellow}⚠️  DRY RUN MODE - No real orders will be placed${colors.reset}`);
+    console.log(`${colors.yellow}   Set DRY_RUN_MODE=false in .env to enable live trading${colors.reset}\n`);
+  }
+
   try {
     // Test 1: Initialize Order Manager
     console.log(`${colors.yellow}═══ Test 1: Initialize Order Manager ═══${colors.reset}\n`);
     
     const orderManager = new OrderManager(config.wallet.privateKey, {
-      dryRun: true,  // Always test in dry-run mode
+      dryRun: dryRunMode,
       verbose: true,
     });
 
@@ -172,9 +205,18 @@ async function testOrderManager() {
     console.log(`${colors.green}✓ Prices retrieved\n${colors.reset}`);
 
     // Test 5: Place Buy Order for Up
-    console.log(`${colors.yellow}═══ Test 5: Place Buy Order for UP (DRY RUN) ═══${colors.reset}\n`);
+    const modeLabel = dryRunMode ? 'DRY RUN' : 'LIVE';
+    console.log(`${colors.yellow}═══ Test 5: Place Buy Order for UP (${modeLabel}) ═══${colors.reset}\n`);
     
-    const investmentAmount = config.liveTrading.positionSize || 1; // Use position size from config
+    // Use at least $5 to meet Polymarket's minimum order size (5 shares)
+    // If price is low, we need more investment to get 5+ shares
+    const minInvestment = 5.0;
+    const requestedInvestment = config.liveTrading.positionSize || 1;
+    const investmentAmount = Math.max(requestedInvestment, minInvestment);
+    
+    if (investmentAmount > requestedInvestment) {
+      console.log(`${colors.yellow}⚠️  Adjusted investment from $${requestedInvestment} to $${investmentAmount} to meet minimum order size${colors.reset}\n`);
+    }
     
     const upBuyResult = await orderManager.placeBuyOrder(
       marketData.upTokenId,
@@ -198,8 +240,9 @@ async function testOrderManager() {
     console.log('');
 
     // Test 6: Place Buy Order for Down
-    console.log(`${colors.yellow}═══ Test 6: Place Buy Order for DOWN (DRY RUN) ═══${colors.reset}\n`);
+    console.log(`${colors.yellow}═══ Test 6: Place Buy Order for DOWN (${modeLabel}) ═══${colors.reset}\n`);
     
+    // Use same investment amount (already adjusted for minimums)
     const downBuyResult = await orderManager.placeBuyOrder(
       marketData.downTokenId,
       downPrice,
@@ -249,15 +292,70 @@ async function testOrderManager() {
     console.log(`${colors.green}✓ Statistics retrieved\n${colors.reset}`);
 
     // Summary
-    console.log(`${colors.bright}${colors.green}╔════════════════════════════════════════╗${colors.reset}`);
-    console.log(`${colors.bright}${colors.green}║   All Tests Passed!                    ║${colors.reset}`);
-    console.log(`${colors.bright}${colors.green}╚════════════════════════════════════════╝${colors.reset}\n`);
+    const upOrderSuccess = upBuyResult.success;
+    const downOrderSuccess = downBuyResult.success;
+    const allOrdersSuccessful = upOrderSuccess && downOrderSuccess;
+    
+    if (allOrdersSuccessful) {
+      if (dryRunMode) {
+        console.log(`${colors.bright}${colors.green}╔════════════════════════════════════════╗${colors.reset}`);
+        console.log(`${colors.bright}${colors.green}║   All Tests Passed!                    ║${colors.reset}`);
+        console.log(`${colors.bright}${colors.green}╚════════════════════════════════════════╝${colors.reset}\n`);
+        console.log(`${colors.yellow}⚠️  NOTE: DRY RUN MODE - No real orders were placed${colors.reset}`);
+        console.log(`${colors.yellow}   Your wallet balance did NOT change${colors.reset}\n`);
+      } else {
+        console.log(`${colors.bright}${colors.green}╔════════════════════════════════════════╗${colors.reset}`);
+        console.log(`${colors.bright}${colors.green}║   ✅ LIVE ORDERS PLACED!              ║${colors.reset}`);
+        console.log(`${colors.bright}${colors.green}╚════════════════════════════════════════╝${colors.reset}\n`);
+        console.log(`${colors.green}✓ Real orders have been placed on Polymarket${colors.reset}`);
+        console.log(`${colors.green}✓ Check your wallet balance and open orders${colors.reset}\n`);
+      }
+    } else {
+      console.log(`${colors.bright}${colors.yellow}╔════════════════════════════════════════╗${colors.reset}`);
+      console.log(`${colors.bright}${colors.yellow}║   Tests Completed (Some Failed)      ║${colors.reset}`);
+      console.log(`${colors.bright}${colors.yellow}╚════════════════════════════════════════╝${colors.reset}\n`);
+      
+      if (!upOrderSuccess) {
+        console.log(`${colors.red}✗ Up order failed: ${upBuyResult.error}${colors.reset}`);
+      }
+      if (!downOrderSuccess) {
+        console.log(`${colors.red}✗ Down order failed: ${downBuyResult.error}${colors.reset}`);
+      }
+      console.log('');
+    }
 
-    console.log(`${colors.cyan}Next steps:${colors.reset}`);
-    console.log(`1. Fund your wallet with USDC on Polygon`);
-    console.log(`2. Set DRY_RUN_MODE=false in .env for live trading`);
-    console.log(`3. Set LIVE_TRADING_ENABLED=true to enable live mode`);
-    console.log(`4. Run the bot: npm start\n`);
+    console.log(`${colors.cyan}Order Details:${colors.reset}`);
+    if (upOrderSuccess) {
+      console.log(`  Up Order ID: ${upBuyResult.orderID}`);
+      console.log(`  Up Order Status: ${upBuyResult.status}`);
+    }
+    if (downOrderSuccess) {
+      console.log(`  Down Order ID: ${downBuyResult.orderID}`);
+      console.log(`  Down Order Status: ${downBuyResult.status}`);
+    }
+    console.log('');
+
+    if (balance.usdc === 0) {
+      console.log(`${colors.yellow}⚠️  Your USDC balance is $0.00${colors.reset}`);
+      console.log(`   Fund your wallet with USDC on Polygon`);
+      console.log(`   Check balance: https://polygonscan.com/address/${balance.address}\n`);
+    }
+
+    if (dryRunMode) {
+      console.log(`${colors.cyan}To place real orders:${colors.reset}`);
+      console.log(`1. Set DRY_RUN_MODE=false in .env`);
+      console.log(`2. Ensure you have USDC balance (minimum $5 recommended)`);
+      console.log(`3. Run this test again: npm run test:orders\n`);
+    } else {
+      if (allOrdersSuccessful) {
+        console.log(`${colors.green}✅ Live orders have been placed!${colors.reset}`);
+        console.log(`   View orders on Polymarket: https://polymarket.com/portfolio\n`);
+      } else {
+        console.log(`${colors.red}❌ Orders failed - check errors above${colors.reset}`);
+        console.log(`   Ensure you have sufficient USDC balance (minimum $5 per order)`);
+        console.log(`   Check Polymarket for any existing orders: https://polymarket.com/portfolio\n`);
+      }
+    }
 
   } catch (error) {
     console.error(`\n${colors.red}❌ Test failed:${colors.reset}`, error.message);

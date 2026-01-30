@@ -14,6 +14,7 @@ const config = {
   api: {
     gammaUrl: process.env.GAMMA_API_URL || 'https://gamma-api.polymarket.com',
     clobUrl: process.env.CLOB_API_URL || 'https://clob.polymarket.com',
+    dataApiUrl: process.env.DATA_API_URL || 'https://data-api.polymarket.com',
   },
 
   // Trading strategy parameters
@@ -61,6 +62,9 @@ const config = {
     minExpectedReturn: parseFloat(process.env.MIN_EXPECTED_RETURN_LIVE) || 2.10,
     signatureType: parseInt(process.env.SIGNATURE_TYPE) || 0, // 0 = EOA
     verbose: process.env.VERBOSE_LOGGING === 'true',
+    // When true, bot automatically redeems winning positions (Data-API + fallback)
+    autoRedeem: process.env.AUTO_REDEEM_ENABLED === 'true',
+    autoRedeemIntervalMinutes: parseInt(process.env.AUTO_REDEEM_INTERVAL_MINUTES, 10) || 60,
   },
 };
 

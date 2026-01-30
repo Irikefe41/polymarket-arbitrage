@@ -58,6 +58,15 @@ class TradingExecutor {
   getOpenPositions(marketSlug) {
     return this.portfolio.getOpenPositionsForMarket(marketSlug);
   }
+
+  /**
+   * Redeem all redeemable positions (Data-API + fallback). No-op in paper mode.
+   * When AUTO_REDEEM_ENABLED=true, the bot calls this periodically.
+   * @returns {Promise<{redeemed: number, failed: number}>}
+   */
+  async redeemRedeemablePositions() {
+    return { redeemed: 0, failed: 0 };
+  }
 }
 
 /**
@@ -281,13 +290,14 @@ class LiveTradingExecutor extends TradingExecutor {
       }
 
       // Record position in portfolio (optimistic - assumes order will fill)
-      // In production, you'd want to wait for order fill confirmation
+      // Use actualInvestment from order result if available (may be adjusted for Polymarket minimums)
+      const actualAmountSpent = orderResult.actualInvestment || investmentAmount;
       const result = this.portfolio.buyShares(
         marketSlug,
         marketTitle,
         outcome,
         price,
-        investmentAmount,
+        actualAmountSpent, // Use actual amount spent on-chain
         marketEndDate
       );
 
@@ -371,6 +381,17 @@ class LiveTradingExecutor extends TradingExecutor {
       console.error(`❌ Failed to close live positions: ${error.message}`);
       throw new Error(`Failed to close live positions: ${error.message}`);
     }
+  }
+
+  /**
+   * Redeem all redeemable positions (Data-API first, then trade-history fallback).
+   * Called automatically when AUTO_REDEEM_ENABLED=true.
+   * @returns {Promise<{redeemed: number, failed: number}>}
+   */
+  async redeemRedeemablePositions() {
+    await this._ensureOrderManager();
+    if (!this.orderManager) return { redeemed: 0, failed: 0 };
+    return this.orderManager.redeemRedeemablePositions();
   }
 }
 

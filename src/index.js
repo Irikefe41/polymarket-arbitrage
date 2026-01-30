@@ -666,6 +666,7 @@ async function streamMarketData(eventSlugOrMarket = null, isTransition = false, 
 
   let iteration = 0;
   let intervalId = null;
+  let redeemIntervalId = null;
   let hasEnded = false;
   
   // Store prices for tracking
@@ -746,7 +747,7 @@ async function streamMarketData(eventSlugOrMarket = null, isTransition = false, 
       }
       
       // Evaluate and execute strategy
-      const decision = strategy.shouldExecute(event.slug, currentPrices.up, currentPrices.down);
+      const decision = strategy.shouldExecute(event.slug, currentPrices.up, currentPrices.down, event.endDate);
       
       if (decision.shouldExecute) {
         console.log(`\n${colors.green}⚡ INSTANT EXECUTION (Price Update: ${priceUpdate.source})${colors.reset}`);
@@ -874,6 +875,10 @@ async function streamMarketData(eventSlugOrMarket = null, isTransition = false, 
       console.log(`\n${colors.red}⚠️  Market has ended!${colors.reset}`);
       
       clearInterval(intervalId);
+      if (redeemIntervalId) {
+        clearInterval(redeemIntervalId);
+        redeemIntervalId = null;
+      }
       rl.close(); // Close readline for this market
       
       // Check for open positions to close
@@ -1161,7 +1166,7 @@ async function streamMarketData(eventSlugOrMarket = null, isTransition = false, 
     
     if (outcomePrices.length === 2 && pricesAreValid) {
       // Check strategy status (display only - actual execution happens on price events)
-      const decision = strategy.shouldExecute(event.slug, currentPrices.up, currentPrices.down);
+      const decision = strategy.shouldExecute(event.slug, currentPrices.up, currentPrices.down, event.endDate);
       
       if (decision.shouldExecute) {
         // Show that conditions are met (but execution happens via events)
@@ -1361,6 +1366,47 @@ async function streamMarketData(eventSlugOrMarket = null, isTransition = false, 
   // Set up interval for continuous polling (only if market hasn't ended)
   if (!hasEnded) {
     intervalId = setInterval(pollData, POLL_INTERVAL);
+  }
+
+  // Auto-redeem: when live trading + autoRedeem enabled, periodically redeem winning positions
+  if (config.liveTrading.enabled && config.liveTrading.autoRedeem && typeof tradingExecutor.redeemRedeemablePositions === 'function') {
+    const intervalMs = config.liveTrading.autoRedeemIntervalMinutes * 60 * 1000;
+    const runRedeem = async () => {
+      try {
+        console.log(`${colors.cyan}💰 [Auto-redeem]${colors.reset} Checking for redeemable positions...`);
+        const result = await tradingExecutor.redeemRedeemablePositions();
+        if (result) {
+          if (result.redeemed > 0) {
+            console.log(`${colors.green}✅ [Auto-redeem]${colors.reset} Successfully redeemed ${result.redeemed} position(s)`);
+            
+            // CRITICAL: Sync actual USDC balance after successful redemptions
+            try {
+              const actualBalance = await tradingExecutor.orderManager.getBalance();
+              const oldBalance = portfolio.balance;
+              portfolio.balance = actualBalance.usdc;
+              portfolio.save();
+              const diff = actualBalance.usdc - oldBalance;
+              console.log(`${colors.cyan}💰 [Balance Sync]${colors.reset} Portfolio updated: $${oldBalance.toFixed(2)} → $${actualBalance.usdc.toFixed(2)} (${diff >= 0 ? '+' : ''}$${diff.toFixed(2)})`);
+            } catch (syncErr) {
+              console.error(`${colors.yellow}⚠️  [Balance Sync Failed]${colors.reset}`, syncErr.message);
+            }
+          }
+          if (result.failed > 0) {
+            console.log(`${colors.yellow}⚠️  [Auto-redeem]${colors.reset} ${result.failed} position(s) failed to redeem`);
+          }
+          if (result.redeemed === 0 && result.failed === 0) {
+            console.log(`${colors.dim}[Auto-redeem] No positions to redeem${colors.reset}`);
+          }
+        }
+      } catch (err) {
+        console.error(`${colors.red}❌ [Auto-redeem error]${colors.reset}`, err.message);
+      }
+    };
+    // First run after 30 seconds
+    setTimeout(runRedeem, 30000);
+    // Then every autoRedeemIntervalMinutes
+    redeemIntervalId = setInterval(runRedeem, intervalMs);
+    console.log(`${colors.green}✅ Auto-redeem enabled${colors.reset} (every ${config.liveTrading.autoRedeemIntervalMinutes}m, first run in 30s)`);
   }
 }
 
