@@ -1,7 +1,7 @@
 {
-  "name": "polymarket-btc-trading-bot",
-  "version": "0.1.0",
-  "description": "Automated paper trading bot for Polymarket Bitcoin Up/Down 15-minute markets with intelligent strategy execution",
+  "name": "polymarket-crypto-trading-bot",
+  "version": "0.2.0",
+  "description": "Automated trading bot for Polymarket crypto Up/Down markets (BTC, SOL, ETH, XRP) with intelligent strategy execution",
   "main": "src/index.js",
   "type": "module",
   "scripts": {

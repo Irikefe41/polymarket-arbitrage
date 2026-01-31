@@ -17,6 +17,12 @@ const config = {
     dataApiUrl: process.env.DATA_API_URL || 'https://data-api.polymarket.com',
   },
 
+  // Market configuration
+  market: {
+    type: (process.env.MARKET_TYPE || 'BTC').toUpperCase(),
+    interval: parseInt(process.env.MARKET_INTERVAL) || 15, // minutes
+  },
+
   // Trading strategy parameters
   strategy: {
     initialBalance: parseFloat(process.env.INITIAL_BALANCE) || 10000,
@@ -105,11 +111,51 @@ export function validateConfig() {
     }
   }
 
+  // Validate market type
+  const validMarketTypes = ['BTC', 'SOL', 'ETH', 'XRP'];
+  if (!validMarketTypes.includes(config.market.type)) {
+    errors.push(`MARKET_TYPE must be one of: ${validMarketTypes.join(', ')} (got: ${config.market.type})`);
+  }
+
   if (errors.length > 0) {
     throw new Error(`Configuration validation failed:\n${errors.join('\n')}`);
   }
 
   return true;
+}
+
+// Get market-specific configuration
+export function getMarketConfig() {
+  const marketType = config.market.type;
+  
+  const configs = {
+    BTC: {
+      name: 'Bitcoin',
+      slug: 'btc-updown',
+      searchTerm: 'Bitcoin Up or Down',
+      interval: config.market.interval
+    },
+    SOL: {
+      name: 'Solana',
+      slug: 'sol-updown',
+      searchTerm: 'Solana Up or Down',
+      interval: config.market.interval
+    },
+    ETH: {
+      name: 'Ethereum',
+      slug: 'eth-updown',
+      searchTerm: 'Ethereum Up or Down',
+      interval: config.market.interval
+    },
+    XRP: {
+      name: 'XRP',
+      slug: 'xrp-updown',
+      searchTerm: 'XRP Up or Down',
+      interval: config.market.interval
+    }
+  };
+  
+  return configs[marketType] || configs.BTC;
 }
 
 export default config;

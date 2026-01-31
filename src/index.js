@@ -1,7 +1,7 @@
 import fetch from 'node-fetch';
 import https from 'https';
 import readline from 'readline';
-import config, { validateConfig } from '../config/index.js';
+import config, { validateConfig, getMarketConfig } from '../config/index.js';
 import PaperTradingPortfolio from './paper-trading.js';
 import HedgeStrategy from './strategy.js';
 import PriceTracker from './price-tracker.js';
@@ -10,6 +10,9 @@ import logger from './logger.js';
 import performanceTracker from './performance-tracker.js';
 import wsClient from './websocket-client.js';
 import priceCache from './price-cache.js';
+
+// Get market configuration (BTC, SOL, ETH, XRP)
+const marketConfig = getMarketConfig();
 
 // ⚡ PHASE 2: HTTP Connection Pooling Agent
 // Reuses TCP connections instead of creating new ones for each request
@@ -63,7 +66,8 @@ const priceTracker = new PriceTracker();
 
 // Extract timestamp from URL if provided, otherwise use current time
 const extractTimestampFromUrl = (url) => {
-  const match = url.match(/btc-updown-15m-(\d+)/);
+  const pattern = `${marketConfig.slug}-${marketConfig.interval}m-(\\d+)`;
+  const match = url.match(new RegExp(pattern));
   return match ? parseInt(match[1]) : Math.floor(Date.now() / 1000);
 };
 
@@ -129,7 +133,7 @@ function getCurrentMarketTimestamp() {
 }
 
 async function fetchMarketByTimestamp(timestamp) {
-  const slug = `btc-updown-15m-${timestamp}`;
+  const slug = `${marketConfig.slug}-${marketConfig.interval}m-${timestamp}`;
   
   console.log(`${colors.cyan}Fetching market: ${slug}${colors.reset}`);
   console.log(`${colors.cyan}Market start time: ${new Date(timestamp * 1000).toISOString()}${colors.reset}`);
@@ -1609,7 +1613,8 @@ async function resumeOrStartNew() {
 }
 
 // Start streaming - automatically find current active market
-console.log(`${colors.bright}${colors.blue}🚀 Bitcoin Up/Down Market Streamer${colors.reset}`);
+console.log(`${colors.bright}${colors.blue}🚀 ${marketConfig.name} Up/Down Market Streamer${colors.reset}`);
+console.log(`${colors.cyan}Market Type: ${marketConfig.name} (${marketConfig.interval}-minute intervals)${colors.reset}`);
 console.log(`${colors.cyan}Initializing...${colors.reset}\n`);
 
 // Global cleanup handler
@@ -1651,10 +1656,41 @@ function gracefulShutdown(signal) {
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
-// Clean up expired positions, then resume or start new
-cleanupExpiredPositions().then(() => {
-  return resumeOrStartNew();
-}).catch(error => {
-  console.error(`${colors.red}Fatal error:${colors.reset}`, error);
-  process.exit(1);
-});
+// Sync wallet balance on startup (live trading only)
+async function syncBalanceOnStartup() {
+  if (!config.liveTrading.enabled) {
+    return; // Skip for paper trading
+  }
+  
+  try {
+    console.log(`${colors.cyan}💰 Syncing wallet balance...${colors.reset}`);
+    
+    // Ensure OrderManager is initialized
+    await tradingExecutor._ensureOrderManager();
+    
+    // Query actual wallet balance
+    const actualBalance = await tradingExecutor.orderManager.getBalance();
+    const oldBalance = portfolio.balance;
+    
+    // Update portfolio
+    portfolio.balance = actualBalance.usdc;
+    portfolio.save();
+    
+    const diff = actualBalance.usdc - oldBalance;
+    const diffColor = diff >= 0 ? colors.green : colors.red;
+    
+    console.log(`${colors.green}✅ Balance synced:${colors.reset} $${oldBalance.toFixed(2)} → $${actualBalance.usdc.toFixed(2)} ${diffColor}(${diff >= 0 ? '+' : ''}$${diff.toFixed(2)})${colors.reset}\n`);
+  } catch (err) {
+    console.warn(`${colors.yellow}⚠️  Balance sync failed:${colors.reset} ${err.message}`);
+    console.warn(`${colors.yellow}   Continuing with portfolio balance: $${portfolio.balance.toFixed(2)}${colors.reset}\n`);
+  }
+}
+
+// Clean up expired positions, sync balance, then resume or start new
+cleanupExpiredPositions()
+  .then(() => syncBalanceOnStartup())
+  .then(() => resumeOrStartNew())
+  .catch(error => {
+    console.error(`${colors.red}Fatal error:${colors.reset}`, error);
+    process.exit(1);
+  });

@@ -1,11 +1,11 @@
-# 🤖 Polymarket BTC Trading Bot
+# 🤖 Polymarket Crypto Trading Bot
 
 > **⚠️ PROJECT STATUS: Work in Progress**  
-> This is an experimental automated trading bot for Polymarket's Bitcoin Up/Down 15-minute markets. Supports both **paper trading** (simulated) and **live trading** (real money). Live trading requires wallet configuration and API integration.
+> An experimental automated trading bot for Polymarket's crypto Up/Down 15-minute markets. Supports **BTC, SOL, ETH, and XRP** markets. Includes both **paper trading** (simulated) and **live trading** (real money). Live trading requires wallet configuration and API integration.
 
 ## 📋 Overview
 
-An intelligent automated trading bot that monitors and trades on Polymarket's Bitcoin Up/Down 15-minute prediction markets. The bot evaluates market conditions in real-time, executes trades based on configurable ROI thresholds, and manages positions through market resolution.
+An intelligent automated trading bot that monitors and trades on Polymarket's crypto Up/Down 15-minute prediction markets (BTC, SOL, ETH, XRP). The bot evaluates market conditions in real-time, executes trades based on configurable ROI thresholds, and manages positions through market resolution.
 
 ### 🎯 Key Features
 
